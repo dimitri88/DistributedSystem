@@ -172,7 +172,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	reply.Term = rf.currentTerm
 	reply.VoteGranted = false
-
+	log.Printf("**** Requesting vote from %v (Term %v) to %v (Term %v)", args.CandidateID, args.Term, rf.me, rf.currentTerm)
 	if rf.currentTerm > args.Term {
 		return
 	}
@@ -188,8 +188,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	reply.VoteGranted = true
 	rf.votedFor = args.CandidateID
 	if args.Term > rf.currentTerm {
-		rf.currentTerm = args.Term
-		rf.state = Follower
+		log.Printf("%v has voted for %v and is becoming a follower", rf.me, args.CandidateID)
+		rf.toFollower(args.Term)
 	}
 	log.Printf("%v has voted for %v at Term:%v, Total Servers: %v \n", rf.me, args.CandidateID, rf.currentTerm, len(rf.peers))
 
@@ -218,10 +218,7 @@ type AppendEntriesReply struct {
 
 //AppendEntries Appending
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
-	log.Printf("trying to grab lock for %v", rf.me)
 	rf.Lock()
-	log.Printf("lock grabbed for %v", rf.me)
-	log.Printf("###################### %v", len(args.Entries))
 	defer rf.Unlock()
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
@@ -230,12 +227,11 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	if args.Term > rf.currentTerm {
-		rf.currentTerm = args.Term
-		rf.votedFor = -1
+		rf.toFollower(args.Term)
 	}
 
 	if len(args.Entries) == 0 {
-		log.Printf("%v has set headbeat to true", rf.me)
+		// log.Printf("%v has set headbeat to true", rf.me)
 		rf.heartBeat = true
 		if rf.state == Candidate {
 			rf.state = Follower
@@ -321,6 +317,8 @@ func (rf *Raft) toFollower(term int) {
 	// Your code here, if desired.
 	rf.currentTerm = term
 	rf.state = Follower
+	rf.heartBeat = true
+	rf.votedFor = -1
 }
 
 //
@@ -368,8 +366,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 			rf.Lock()
 			hb := rf.heartBeat
 			state := rf.state
+			// votedFor := rf.votedFor
 			rf.Unlock()
-			if !hb && state == Follower {
+			if !hb && state != Leader {
 				log.Printf("%v has become the candidate", rf.me)
 				//do stuff, shoud start election
 				rf.Lock()
@@ -393,36 +392,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 								if rf.currentTerm == args.Term {
 									if res.VoteGranted {
 										rf.voteCounter++
-										if rf.voteCounter > len(rf.peers)/2 {
+										if rf.voteCounter+1 > len(rf.peers)/2 {
 											rf.state = Leader
 											log.Printf("%v has become the leader", rf.me)
 											rf.voteCounter = 0
-											// rf.Lock()
-											// args := AppendEntriesArgs{
-											// 	Term:     rf.currentTerm,
-											// 	LeaderID: me,
-											// 	Entries:  make([]Entry, 0),
-											// }
-											// for i := range rf.peers {
-											// 	log.Printf("looping %v to send results", rf.me)
-											// 	if i != me {
-											// 		go func(i int, args AppendEntriesArgs) {
-											// 			var res AppendEntriesReply
-											// 			log.Printf("%v has sent out the heartbeat as leader", rf.me)
-											// 			ok := rf.sendAppendEntries(i, &args, &res)
-											// 			if ok {
-											// 				rf.Lock()
-											// 				if args.Term == rf.currentTerm {
-											// 					if !res.Success && args.Term < res.Term {
-											// 						rf.toFollower(res.Term)
-											// 					}
-											// 				}
-											// 				rf.Unlock()
-											// 			}
-											// 		}(i, args)
-											// 	}
-											// }
-											// rf.Unlock()
 										}
 									} else if res.Term > rf.currentTerm {
 										rf.toFollower(res.Term)
@@ -430,6 +403,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 								}
 								rf.Unlock()
 							}
+
 						}(i, args)
 					}
 				}
@@ -462,13 +436,15 @@ func Make(peers []*labrpc.ClientEnd, me int,
 							if ok {
 								rf.Lock()
 								if args.Term == rf.currentTerm {
+									log.Printf("Leader %v is at term: %v", rf.me, rf.currentTerm)
 									if !res.Success && args.Term < res.Term {
+										print("from leader to follower\n")
 										rf.toFollower(res.Term)
 									}
 								}
 								rf.Unlock()
-
 							}
+
 						}(i, args)
 					}
 				}
